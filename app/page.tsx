@@ -1,7 +1,7 @@
 "use client";
-import React, { useState, useEffect } from 'react';
-import { Wallet, TrendingUp, Clock, ShieldCheck, Calendar as CalendarIcon, LogIn, LogOut, User, Loader2, CheckCircle2, History, Landmark, CreditCard, ArrowUpRight } from 'lucide-react';
-import { supabase } from '../supabaseClient'; 
+import React, { useState, useEffect, useCallback } from 'react';
+import { Calendar as CalendarIcon, LogOut, Loader2, CheckCircle2, History, CreditCard, ArrowUpRight } from 'lucide-react';
+import { supabase } from '../supabaseClient';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 
 // --- AD to BS Converter Logic ---
@@ -13,17 +13,50 @@ const getNepaliDate = (date: Date) => {
   return `${date.getDate()} ${nepaliMonths[monthIndex]}, ${bsYear} BS`;
 };
 
+// Transaction type interface
+interface Transaction {
+  id: string;
+  user_id: string;
+  amount_npr: number;
+  gold_grams: number;
+  rate_at_purchase: number;
+  payment_token: string;
+  created_at: string;
+}
+
+// Helper function outside component to avoid purity issues
+const generateRandomToken = () => {
+  // This is okay because it's outside the component
+  return "SIM_KHALTI_" + Math.random().toString(36).substr(2, 9);
+};
+
 export default function SunauloApp() {
   const [nprAmount, setNprAmount] = useState<string>("1000");
-  const [goldRatePerTola] = useState<number>(135000); 
+  const [goldRatePerTola] = useState<number>(135000);
   const [currentTime, setCurrentTime] = useState<string>("");
   const [nepaliDate, setNepaliDate] = useState<string>("");
   const [user, setUser] = useState<SupabaseUser | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'paying' | 'saving' | 'success'>('idle');
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [totalGold, setTotalGold] = useState<number>(0);
   const [totalInvested, setTotalInvested] = useState<number>(0);
+
+  const fetchTransactions = useCallback(async (userId: string) => {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    
+    if (!error && data) {
+      setTransactions(data);
+      const totalG = data.reduce((acc, curr) => acc + parseFloat(curr.gold_grams.toString()), 0);
+      const totalI = data.reduce((acc, curr) => acc + parseFloat(curr.amount_npr.toString()), 0);
+      setTotalGold(totalG);
+      setTotalInvested(totalI);
+    }
+  }, []);
 
   useEffect(() => {
     setIsMounted(true);
@@ -48,23 +81,7 @@ export default function SunauloApp() {
     updateTime();
     const timer = setInterval(updateTime, 1000);
     return () => { clearInterval(timer); authListener.subscription.unsubscribe(); };
-  }, []);
-
-  const fetchTransactions = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-    
-    if (!error && data) {
-      setTransactions(data);
-      const totalG = data.reduce((acc, curr) => acc + parseFloat(curr.gold_grams), 0);
-      const totalI = data.reduce((acc, curr) => acc + parseFloat(curr.amount_npr), 0);
-      setTotalGold(totalG);
-      setTotalInvested(totalI);
-    }
-  };
+  }, [fetchTransactions]);
 
   const handlePaymentAndSave = async () => {
     if (!user) return;
@@ -73,7 +90,7 @@ export default function SunauloApp() {
       `Sunaulo Secure Payment (PROTOTYPE)\n--------------------------\nAmount: रू ${nprAmount}\nGold: ${weightInGrams.toFixed(4)}g\n\nClick OK to simulate successful Khalti payment.`
     );
     if (confirmed) {
-      const fakeToken = "SIM_KHALTI_" + Math.random().toString(36).substr(2, 9);
+      const fakeToken = generateRandomToken();
       await saveGoldToDB(fakeToken);
     } else {
       setSaveStatus('idle');
