@@ -32,7 +32,7 @@ const generateRandomToken = () => {
 
 export default function SunauloApp() {
   const [nprAmount, setNprAmount] = useState<string>("1000");
-  const [goldRatePerTola] = useState<number>(135000);
+  const [goldRatePerTola, setGoldRatePerTola] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState<string>("");
   const [nepaliDate, setNepaliDate] = useState<string>("");
   const [user, setUser] = useState<SupabaseUser | null>(null);
@@ -43,6 +43,8 @@ export default function SunauloApp() {
   const [totalInvested, setTotalInvested] = useState<number>(0);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [rateLoading, setRateLoading] = useState<boolean>(true);
+  const [rateError, setRateError] = useState<string | null>(null);
 
   const fetchTransactions = useCallback(async (userId: string) => {
     const { data, error } = await supabase
@@ -61,7 +63,6 @@ export default function SunauloApp() {
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsMounted(true);
     const checkUser = async () => {
       try {
@@ -85,6 +86,20 @@ export default function SunauloApp() {
     });
 
     const updateTime = () => {
+  // Fetch gold rate from API
+    setRateLoading(true);
+    setRateError(null);
+    fetch("/api/gold-rate")
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Failed to fetch gold rate");
+        const data = await res.json();
+        setGoldRatePerTola(data.rate);
+        setRateLoading(false);
+      })
+      .catch(() => {
+        setRateError("Could not fetch gold rate");
+        setRateLoading(false);
+      });
       const now = new Date();
       setCurrentTime(now.toLocaleString('en-NP', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }));
       setNepaliDate(getNepaliDate(now));
@@ -109,6 +124,7 @@ export default function SunauloApp() {
   };
 
   const saveGoldToDB = async (paymentToken: string) => {
+    if (!goldRatePerTola) return;
     setSaveStatus('saving');
     const amount = parseFloat(nprAmount);
     const grams = (amount / goldRatePerTola) * 11.6638;
@@ -143,9 +159,11 @@ export default function SunauloApp() {
     await supabase.auth.signOut();
   };
 
-  const weightInGrams = (Math.max(0, parseFloat(nprAmount) || 0) / goldRatePerTola) * 11.6638;
+  const weightInGrams = goldRatePerTola ? (Math.max(0, parseFloat(nprAmount) || 0) / goldRatePerTola) * 11.6638 : 0;
 
   if (!isMounted) return <div className="min-h-screen bg-slate-50" />;
+  if (rateLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-xl text-slate-400">Loading gold rate...</div>;
+  if (rateError) return <div className="min-h-screen flex items-center justify-center bg-red-50 text-xl text-red-400">{rateError}</div>;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4 md:p-8 font-sans text-slate-900 pb-24">
@@ -157,16 +175,27 @@ export default function SunauloApp() {
           </div>
           <h1 className="text-2xl font-black text-slate-800 tracking-tight italic uppercase">Sunaulo</h1>
         </div>
-        {authLoading ? (
-          <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
-        ) : user ? (
-          <button onClick={handleLogout} className="bg-white p-2 rounded-full border border-slate-200 shadow-sm hover:bg-red-50 transition-colors"><LogOut size={18} className="text-slate-400" /></button>
-        ) : (
-          <div className="flex flex-col items-end gap-1">
-            <button onClick={handleLogin} className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-black transition-colors">Login</button>
-            {loginError && <p className="text-[9px] text-red-500 max-w-[120px] text-right">{loginError}</p>}
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <a href="/profile" className="bg-white p-2 rounded-full border border-slate-200 shadow-sm hover:bg-amber-50 transition-colors" title="Profile">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="text-amber-600"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-2.5 3.5-4 8-4s8 1.5 8 4" /></svg>
+          </a>
+          <a href="/redeem" className="bg-white p-2 rounded-full border border-slate-200 shadow-sm hover:bg-amber-50 transition-colors" title="Redeem Gold">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="text-green-600"><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M12 8v4l2 2" /></svg>
+          </a>
+          <a href="/referral" className="bg-white p-2 rounded-full border border-slate-200 shadow-sm hover:bg-amber-50 transition-colors" title="Referral Program">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="text-pink-500"><rect x="3" y="7" width="18" height="10" rx="4" /><path d="M12 17v4m0-4a4 4 0 0 1-4-4V7m4 10a4 4 0 0 0 4-4V7" /></svg>
+          </a>
+          {authLoading ? (
+            <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+          ) : user ? (
+            <button onClick={handleLogout} className="bg-white p-2 rounded-full border border-slate-200 shadow-sm hover:bg-red-50 transition-colors"><LogOut size={18} className="text-slate-400" /></button>
+          ) : (
+            <div className="flex flex-col items-end gap-1">
+              <button onClick={handleLogin} className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-black transition-colors">Login</button>
+              {loginError && <p className="text-[9px] text-red-500 max-w-[120px] text-right">{loginError}</p>}
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Vault Card */}
@@ -191,7 +220,7 @@ export default function SunauloApp() {
               </div>
               <div className="text-right">
                  <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Portfolio Value</p>
-                 <p className="text-sm font-black text-green-400">रू {(totalGold * (goldRatePerTola / 11.6638)).toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+                 <p className="text-sm font-black text-green-400">रू {goldRatePerTola ? (totalGold * (goldRatePerTola / 11.6638)).toLocaleString(undefined, {maximumFractionDigits: 0}) : '--'}</p>
               </div>
            </div>
         </div>
@@ -204,7 +233,7 @@ export default function SunauloApp() {
            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{currentTime}</div>
         </div>
         <section className="mb-6 flex justify-between items-end">
-          <div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">24K Market Rate</p><p className="text-2xl font-black text-slate-800 tracking-tight">रू {goldRatePerTola.toLocaleString()}<span className="text-xs text-slate-300 ml-1">/tola</span></p></div>
+          <div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">24K Market Rate</p><p className="text-2xl font-black text-slate-800 tracking-tight">रू {goldRatePerTola ? goldRatePerTola.toLocaleString() : '--'}<span className="text-xs text-slate-300 ml-1">/tola</span></p></div>
           <span className="bg-green-100 text-green-600 text-[9px] font-black px-2 py-1 rounded-lg animate-pulse tracking-widest uppercase">Live</span>
         </section>
         <section className="mb-8">
