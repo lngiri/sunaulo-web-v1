@@ -41,6 +41,8 @@ export default function SunauloApp() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [totalGold, setTotalGold] = useState<number>(0);
   const [totalInvested, setTotalInvested] = useState<number>(0);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   const fetchTransactions = useCallback(async (userId: string) => {
     const { data, error } = await supabase
@@ -59,11 +61,19 @@ export default function SunauloApp() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsMounted(true);
     const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
-      if (session?.user) fetchTransactions(session.user.id);
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        setUser(session?.user ?? null);
+        if (session?.user) fetchTransactions(session.user.id);
+      } catch (error) {
+        console.error('Auth error:', error);
+      } finally {
+        setAuthLoading(false);
+      }
     };
     checkUser();
     
@@ -71,6 +81,7 @@ export default function SunauloApp() {
       setUser(session?.user ?? null);
       if (session?.user) fetchTransactions(session.user.id);
       else { setTransactions([]); setTotalGold(0); setTotalInvested(0); }
+      setAuthLoading(false);
     });
 
     const updateTime = () => {
@@ -114,6 +125,24 @@ export default function SunauloApp() {
     }
   };
 
+  const handleLogin = async () => {
+    const email = window.prompt("Enter your email for login:");
+    if (!email) return;
+    
+    setLoginError(null);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email });
+      if (error) throw error;
+      alert("Check your email for the login link!");
+    } catch (error) {
+      setLoginError((error as Error).message || "Login failed. Please try again.");
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
   const weightInGrams = (Math.max(0, parseFloat(nprAmount) || 0) / goldRatePerTola) * 11.6638;
 
   if (!isMounted) return <div className="min-h-screen bg-slate-50" />;
@@ -128,10 +157,15 @@ export default function SunauloApp() {
           </div>
           <h1 className="text-2xl font-black text-slate-800 tracking-tight italic uppercase">Sunaulo</h1>
         </div>
-        {user ? (
-          <button onClick={() => supabase.auth.signOut()} className="bg-white p-2 rounded-full border border-slate-200 shadow-sm hover:bg-red-50"><LogOut size={18} className="text-slate-400" /></button>
+        {authLoading ? (
+          <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+        ) : user ? (
+          <button onClick={handleLogout} className="bg-white p-2 rounded-full border border-slate-200 shadow-sm hover:bg-red-50 transition-colors"><LogOut size={18} className="text-slate-400" /></button>
         ) : (
-          <button onClick={() => {const e = window.prompt("Enter Email:"); if(e) supabase.auth.signInWithOtp({email: e})}} className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest">Login</button>
+          <div className="flex flex-col items-end gap-1">
+            <button onClick={handleLogin} className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-black transition-colors">Login</button>
+            {loginError && <p className="text-[9px] text-red-500 max-w-[120px] text-right">{loginError}</p>}
+          </div>
         )}
       </header>
 
@@ -237,7 +271,7 @@ export default function SunauloApp() {
 
 // Fixed Landmark Icon
 const LandmarkIcon = ({ className }: { className: string }) => (
-  <svg xmlns="http://w3.org" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
     <polyline points="9 22 9 12 15 12 15 22" />
   </svg>
