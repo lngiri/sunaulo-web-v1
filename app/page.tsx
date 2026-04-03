@@ -77,7 +77,7 @@ export default function SunauloApp() {
       }
     };
     checkUser();
-    
+
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) fetchTransactions(session.user.id);
@@ -85,28 +85,39 @@ export default function SunauloApp() {
       setAuthLoading(false);
     });
 
+    // Fetch gold rate once on mount and then every hour
+    const fetchGoldRate = () => {
+      setRateLoading(true);
+      setRateError(null);
+      fetch("/api/gold-rate")
+        .then(async (res) => {
+          if (!res.ok) throw new Error("Failed to fetch gold rate");
+          const data = await res.json();
+          setGoldRatePerTola(data.rate);
+          setRateLoading(false);
+        })
+        .catch(() => {
+          setRateError("Could not fetch gold rate");
+          setRateLoading(false);
+        });
+    };
+    fetchGoldRate();
+    const goldRateInterval = setInterval(fetchGoldRate, 60 * 60 * 1000); // every hour
+
+    // Timer for updating the clock and Nepali date every second
     const updateTime = () => {
-  // Fetch gold rate from API
-    setRateLoading(true);
-    setRateError(null);
-    fetch("/api/gold-rate")
-      .then(async (res) => {
-        if (!res.ok) throw new Error("Failed to fetch gold rate");
-        const data = await res.json();
-        setGoldRatePerTola(data.rate);
-        setRateLoading(false);
-      })
-      .catch(() => {
-        setRateError("Could not fetch gold rate");
-        setRateLoading(false);
-      });
       const now = new Date();
       setCurrentTime(now.toLocaleString('en-NP', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }));
       setNepaliDate(getNepaliDate(now));
     };
     updateTime();
     const timer = setInterval(updateTime, 1000);
-    return () => { clearInterval(timer); authListener.subscription.unsubscribe(); };
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(goldRateInterval);
+      authListener.subscription.unsubscribe();
+    };
   }, [fetchTransactions]);
 
   const handlePaymentAndSave = async () => {

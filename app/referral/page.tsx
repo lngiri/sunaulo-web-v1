@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { supabase } from "../supabaseClient";
+import { supabase } from "../../supabaseClient";
 import { Gift } from "lucide-react";
 import { User as SupabaseUser } from '@supabase/supabase-js';
 
