@@ -33,6 +33,7 @@ const generateRandomToken = () => {
 export default function SunauloApp() {
   const [nprAmount, setNprAmount] = useState<string>("1000");
   const [goldRatePerTola, setGoldRatePerTola] = useState<number | null>(null);
+  const [silverRatePerTola, setSilverRatePerTola] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState<string>("");
   const [nepaliDate, setNepaliDate] = useState<string>("");
   const [user, setUser] = useState<SupabaseUser | null>(null);
@@ -40,11 +41,13 @@ export default function SunauloApp() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'paying' | 'saving' | 'success'>('idle');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [totalGold, setTotalGold] = useState<number>(0);
+  const [totalSilver, setTotalSilver] = useState<number>(0);
   const [totalInvested, setTotalInvested] = useState<number>(0);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [rateLoading, setRateLoading] = useState<boolean>(true);
   const [rateError, setRateError] = useState<string | null>(null);
+  const [metal, setMetal] = useState<'gold' | 'silver'>('gold');
 
   const fetchTransactions = useCallback(async (userId: string) => {
     const { data, error } = await supabase
@@ -52,12 +55,14 @@ export default function SunauloApp() {
       .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
-    
     if (!error && data) {
       setTransactions(data);
-      const totalG = data.reduce((acc, curr) => acc + parseFloat(curr.gold_grams.toString()), 0);
+      // Gold and Silver separation
+      const totalG = data.filter((tx: any) => !tx.metal || tx.metal === 'gold').reduce((acc, curr) => acc + parseFloat(curr.gold_grams.toString()), 0);
+      const totalS = data.filter((tx: any) => tx.metal === 'silver').reduce((acc, curr) => acc + parseFloat(curr.gold_grams.toString()), 0);
       const totalI = data.reduce((acc, curr) => acc + parseFloat(curr.amount_npr.toString()), 0);
       setTotalGold(totalG);
+      setTotalSilver(totalS);
       setTotalInvested(totalI);
     }
   }, []);
@@ -86,23 +91,25 @@ export default function SunauloApp() {
     });
 
     // Fetch gold rate once on mount and then every hour
-    const fetchGoldRate = () => {
+
+    const fetchRates = () => {
       setRateLoading(true);
       setRateError(null);
       fetch("/api/gold-rate")
         .then(async (res) => {
-          if (!res.ok) throw new Error("Failed to fetch gold rate");
+          if (!res.ok) throw new Error("Failed to fetch rates");
           const data = await res.json();
-          setGoldRatePerTola(data.rate);
+          setGoldRatePerTola(data.gold ?? null);
+          setSilverRatePerTola(data.silver ?? null);
           setRateLoading(false);
         })
         .catch(() => {
-          setRateError("Could not fetch gold rate");
+          setRateError("Could not fetch rates");
           setRateLoading(false);
         });
     };
-    fetchGoldRate();
-    const goldRateInterval = setInterval(fetchGoldRate, 60 * 60 * 1000); // every hour
+    fetchRates();
+    const rateInterval = setInterval(fetchRates, 60 * 60 * 1000); // every hour
 
     // Timer for updating the clock and Nepali date every second
     const updateTime = () => {
@@ -115,32 +122,42 @@ export default function SunauloApp() {
 
     return () => {
       clearInterval(timer);
-      clearInterval(goldRateInterval);
+      clearInterval(rateInterval);
       authListener.subscription.unsubscribe();
     };
   }, [fetchTransactions]);
+
 
   const handlePaymentAndSave = async () => {
     if (!user) return;
     setSaveStatus('paying');
     const confirmed = window.confirm(
-      `Sunaulo Secure Payment (PROTOTYPE)\n--------------------------\nAmount: रू ${nprAmount}\nGold: ${weightInGrams.toFixed(4)}g\n\nClick OK to simulate successful Khalti payment.`
+      `Sunaulo Secure Payment (PROTOTYPE)\n--------------------------\nAmount: रू ${nprAmount}\n${metal === 'gold' ? 'Gold' : 'Silver'}: ${weightInGrams.toFixed(4)}g\n\nClick OK to simulate successful Khalti payment.`
     );
     if (confirmed) {
       const fakeToken = generateRandomToken();
-      await saveGoldToDB(fakeToken);
+      await saveMetalToDB(fakeToken);
     } else {
       setSaveStatus('idle');
     }
   };
 
-  const saveGoldToDB = async (paymentToken: string) => {
-    if (!goldRatePerTola) return;
-    setSaveStatus('saving');
+  const saveMetalToDB = async (paymentToken: string) => {
     const amount = parseFloat(nprAmount);
-    const grams = (amount / goldRatePerTola) * 11.6638;
+    let grams = 0;
+    let rate = 0;
+    if (metal === 'gold') {
+      if (!goldRatePerTola) return;
+      rate = goldRatePerTola;
+      grams = (amount / goldRatePerTola) * 11.6638;
+    } else {
+      if (!silverRatePerTola) return;
+      rate = silverRatePerTola;
+      grams = (amount / silverRatePerTola) * 11.6638;
+    }
+    setSaveStatus('saving');
     const { error } = await supabase.from('transactions').insert([
-      { user_id: user?.id, amount_npr: amount, gold_grams: grams, rate_at_purchase: goldRatePerTola, payment_token: paymentToken }
+      { user_id: user?.id, amount_npr: amount, gold_grams: grams, rate_at_purchase: rate, payment_token: paymentToken, metal }
     ]);
     if (error) {
       alert("Database Error: " + error.message);
@@ -170,10 +187,12 @@ export default function SunauloApp() {
     await supabase.auth.signOut();
   };
 
-  const weightInGrams = goldRatePerTola ? (Math.max(0, parseFloat(nprAmount) || 0) / goldRatePerTola) * 11.6638 : 0;
+  const weightInGrams = metal === 'gold'
+    ? (goldRatePerTola ? (Math.max(0, parseFloat(nprAmount) || 0) / goldRatePerTola) * 11.6638 : 0)
+    : (silverRatePerTola ? (Math.max(0, parseFloat(nprAmount) || 0) / silverRatePerTola) * 11.6638 : 0);
 
   if (!isMounted) return <div className="min-h-screen bg-slate-50" />;
-  if (rateLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-xl text-slate-400">Loading gold rate...</div>;
+  if (rateLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-xl text-slate-400">Loading rates...</div>;
   if (rateError) return <div className="min-h-screen flex items-center justify-center bg-red-50 text-xl text-red-400">{rateError}</div>;
 
   return (
@@ -239,13 +258,37 @@ export default function SunauloApp() {
 
       {/* Main Calculator */}
       <main className="w-full max-w-md bg-white rounded-[2.5rem] shadow-xl p-8 border border-slate-100 mb-8 relative">
+        {/* Metal Toggle */}
+        <div className="flex justify-center mb-6">
+          <button
+            className={`px-4 py-2 rounded-l-full font-bold text-xs uppercase border ${metal === 'gold' ? 'bg-amber-400 text-white border-amber-400' : 'bg-white text-amber-400 border-amber-200'}`}
+            onClick={() => setMetal('gold')}
+            disabled={metal === 'gold'}
+          >Gold</button>
+          <button
+            className={`px-4 py-2 rounded-r-full font-bold text-xs uppercase border-l-0 border ${metal === 'silver' ? 'bg-slate-400 text-white border-slate-400' : 'bg-white text-slate-400 border-slate-200'}`}
+            onClick={() => setMetal('silver')}
+            disabled={metal === 'silver'}
+          >Silver</button>
+        </div>
         <div className="flex justify-between items-center mb-6">
            <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase"><CalendarIcon size={10}/> {nepaliDate}</div>
            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{currentTime}</div>
         </div>
-        <section className="mb-6 flex justify-between items-end">
-          <div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">24K Market Rate</p><p className="text-2xl font-black text-slate-800 tracking-tight">रू {goldRatePerTola ? goldRatePerTola.toLocaleString() : '--'}<span className="text-xs text-slate-300 ml-1">/tola</span></p></div>
-          <span className="bg-green-100 text-green-600 text-[9px] font-black px-2 py-1 rounded-lg animate-pulse tracking-widest uppercase">Live</span>
+        <section className="mb-6 flex flex-col gap-2">
+          <div className="flex justify-between items-end">
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Gold (24K) Rate</p>
+              <p className="text-2xl font-black text-slate-800 tracking-tight">रू {goldRatePerTola ? goldRatePerTola.toLocaleString() : '--'}<span className="text-xs text-slate-300 ml-1">/tola</span></p>
+            </div>
+            <span className="bg-green-100 text-green-600 text-[9px] font-black px-2 py-1 rounded-lg animate-pulse tracking-widest uppercase">Live</span>
+          </div>
+          <div className="flex justify-between items-end">
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Silver Rate</p>
+              <p className="text-2xl font-black text-slate-800 tracking-tight">रू {silverRatePerTola ? silverRatePerTola.toLocaleString() : '--'}<span className="text-xs text-slate-300 ml-1">/tola</span></p>
+            </div>
+          </div>
         </section>
         <section className="mb-8">
           <label className="block text-[11px] font-black text-slate-500 uppercase tracking-widest mb-3 italic">Investment Amount (NPR)</label>
@@ -254,16 +297,16 @@ export default function SunauloApp() {
             <input type="number" value={nprAmount} onChange={(e) => setNprAmount(e.target.value)} className="w-full pl-8 py-2 bg-transparent border-b-2 border-slate-100 focus:border-amber-400 text-3xl font-black outline-none transition-all" />
           </div>
         </section>
-        <div className="bg-amber-50 rounded-[1.5rem] p-6 text-center border border-amber-100 mb-6">
-          <p className="text-[10px] font-black text-amber-600 uppercase tracking-[0.2em] mb-1">Add to your vault</p>
-          <p className="text-3xl font-black text-amber-800" suppressHydrationWarning>+{weightInGrams.toFixed(4)} g</p>
+        <div className={`rounded-[1.5rem] p-6 text-center border mb-6 ${metal === 'gold' ? 'bg-amber-50 border-amber-100' : 'bg-slate-100 border-slate-200'}`}>
+          <p className={`text-[10px] font-black uppercase tracking-[0.2em] mb-1 ${metal === 'gold' ? 'text-amber-600' : 'text-slate-600'}`}>Add to your vault</p>
+          <p className={`text-3xl font-black ${metal === 'gold' ? 'text-amber-800' : 'text-slate-800'}`} suppressHydrationWarning>+{weightInGrams.toFixed(4)} g</p>
         </div>
         <button 
           disabled={!user || saveStatus !== 'idle'}
           onClick={handlePaymentAndSave}
-          className={`w-full py-5 rounded-[2rem] font-bold transition-all shadow-xl flex justify-center items-center gap-3 tracking-widest uppercase text-xs ${user ? (saveStatus === 'success' ? 'bg-green-500 text-white' : 'bg-slate-900 text-white hover:bg-black') : 'bg-slate-100 text-slate-300'}`}
+          className={`w-full py-5 rounded-[2rem] font-bold transition-all shadow-xl flex justify-center items-center gap-3 tracking-widest uppercase text-xs ${user ? (saveStatus === 'success' ? 'bg-green-500 text-white' : (metal === 'gold' ? 'bg-slate-900 text-white hover:bg-black' : 'bg-slate-400 text-white hover:bg-slate-500')) : 'bg-slate-100 text-slate-300'}`}
         >
-          {saveStatus === 'idle' ? <>{user ? <><CreditCard size={18}/> Pay & Invest</> : "Login to Save Gold"}</> : <Loader2 className="animate-spin" />}
+          {saveStatus === 'idle' ? <>{user ? <><CreditCard size={18}/> Pay & Invest {metal === 'gold' ? 'Gold' : 'Silver'}</> : `Login to Save ${metal === 'gold' ? 'Gold' : 'Silver'}`}</> : <Loader2 className="animate-spin" />}
           {saveStatus === 'success' && <CheckCircle2 />}
         </button>
       </main>
@@ -278,11 +321,15 @@ export default function SunauloApp() {
             </div>
             <span className="text-[9px] font-bold text-slate-300">{transactions.length} entries</span>
           </div>
+          <div className="flex gap-2 mb-2">
+            <button className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${metal === 'gold' ? 'bg-amber-400 text-white border-amber-400' : 'bg-white text-amber-400 border-amber-200'}`} onClick={() => setMetal('gold')}>Gold Vault</button>
+            <button className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${metal === 'silver' ? 'bg-slate-400 text-white border-slate-400' : 'bg-white text-slate-400 border-slate-200'}`} onClick={() => setMetal('silver')}>Silver Vault</button>
+          </div>
           <div className="space-y-3">
-            {transactions.length === 0 ? (
+            {transactions.filter(tx => (metal === 'gold' ? (!tx.metal || tx.metal === 'gold') : tx.metal === 'silver')).length === 0 ? (
               <div className="bg-white/50 p-10 rounded-[2rem] border-2 border-dashed border-slate-200 text-center text-[10px] font-bold text-slate-400 uppercase">The vault is currently empty</div>
             ) : (
-              transactions.map((tx) => (
+              transactions.filter(tx => (metal === 'gold' ? (!tx.metal || tx.metal === 'gold') : tx.metal === 'silver')).map((tx) => (
                 <div key={tx.id} className="bg-white p-5 rounded-[1.8rem] shadow-sm border border-slate-50 flex justify-between items-center hover:scale-[1.01] transition-transform">
                   <div className="flex gap-4 items-center">
                     <div className="bg-green-50 p-2.5 rounded-xl"><ArrowUpRight size={18} className="text-green-600" /></div>
@@ -291,7 +338,7 @@ export default function SunauloApp() {
                       <div className="flex items-center gap-2 mt-0.5">
                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{new Date(tx.created_at).toLocaleDateString()}</p>
                         <span className="w-1 h-1 bg-slate-200 rounded-full" />
-                        <p className="text-[9px] font-bold text-amber-600 uppercase tracking-tighter italic">Rate: रू {tx.rate_at_purchase.toLocaleString()}</p>
+                        <p className={`text-[9px] font-bold uppercase tracking-tighter italic ${tx.metal === 'silver' ? 'text-slate-600' : 'text-amber-600'}`}>Rate: रू {tx.rate_at_purchase.toLocaleString()}</p>
                       </div>
                     </div>
                   </div>
